@@ -1,52 +1,93 @@
 package socketio
 
 import (
-	"code.google.com/p/go.net/websocket"
+	// "code.google.com/p/go.net/websocket"
 	"fmt"
+	"github.com/gorilla/websocket"
+	"github.com/julienschmidt/httprouter"
+	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
+	"time"
+)
+
+const (
+	DEFAULT_TIMEOUT = 60
+	DEFAULT_PORT    = 8080
+
+	SOCKETIO_BASE_SUFFIX      = "/socket.io/1/"
+	SOCKETIO_WEBSOCKET_SUFFIX = "/socket.io/1/websocket/:session"
+
+	NOT_FOUND    = "These are not the pages you're looking for ..."
+	UNAUTHORIZED = "Sorry, I cannot do that dave"
 )
 
 var (
 	uriRegexp = regexp.MustCompile(`^(.+?)/(1)(?:/([^/]+)/([^/]+))?/?$`)
+	upgrader  = websocket.Upgrader{
+		ReadBufferSize:  2048,
+		WriteBufferSize: 2048,
+		CheckOrigin: func(r *http.Request) bool {
+			return true
+		},
+	}
 )
 
 type Config struct {
+	Port             int
 	HeartbeatTimeout int
 	ClosingTimeout   int
 	NewSessionID     func() string
 	Transports       *TransportManager
-	Authorize        func(*http.Request, map[interface{}]interface{}) bool
+	AuthFunction     func(map[string]string) bool
+	IsSecure         bool
+	SecureCertPath   string
+	SecureKeyPath    string
 }
 
 type SocketIOServer struct {
-	*http.ServeMux
+	// *http.ServeMux
 	mutex            sync.RWMutex
 	heartbeatTimeout int
 	closingTimeout   int
-	authorize        func(*http.Request, map[interface{}]interface{}) bool
+	isAuthorized     func(map[string]string) bool
 	newSessionId     func() string
 	transports       *TransportManager
 	sessions         map[string]*Session
 	eventEmitters    map[string]*EventEmitter
+	isSecure         bool
+	certPath         string
+	keyPath          string
+	port             int
 }
 
 func NewSocketIOServer(config *Config) *SocketIOServer {
-	server := &SocketIOServer{ServeMux: http.NewServeMux()}
+	server := &SocketIOServer{}
 	if config != nil {
 		server.heartbeatTimeout = config.HeartbeatTimeout
 		server.closingTimeout = config.ClosingTimeout
 		server.newSessionId = config.NewSessionID
 		server.transports = config.Transports
-		server.authorize = config.Authorize
+		server.isAuthorized = config.AuthFunction
+		server.port = config.Port
+		if config.IsSecure {
+			server.isSecure = true
+			if fileExists(config.SecureCertPath) && fileExists(config.SecureKeyPath) {
+				server.keyPath, server.certPath = config.SecureKeyPath, config.SecureCertPath
+			} else {
+				panic("chose secure but gave invalid cert path or key path")
+			}
+		}
 	}
 	if server.heartbeatTimeout == 0 {
-		server.heartbeatTimeout = 15000
+		server.heartbeatTimeout = DEFAULT_TIMEOUT
 	}
+	upgrader.HandshakeTimeout = time.Duration(server.heartbeatTimeout) * time.Millisecond
 	if server.closingTimeout == 0 {
-		server.closingTimeout = 10000
+		server.closingTimeout = DEFAULT_TIMEOUT
 	}
 	if server.newSessionId == nil {
 		server.newSessionId = NewSessionID
@@ -54,54 +95,113 @@ func NewSocketIOServer(config *Config) *SocketIOServer {
 	if server.transports == nil {
 		server.transports = DefaultTransports
 	}
+	if server.port == 0 {
+		server.port = DEFAULT_PORT
+	}
+
 	server.sessions = make(map[string]*Session)
 	server.eventEmitters = make(map[string]*EventEmitter)
 	return server
 }
 
-func (srv *SocketIOServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Path
-	if !strings.HasPrefix(path, "/socket.io/1/") {
+func fileExists(name string) bool {
+	if _, err := os.Stat(name); err != nil {
+		return !os.IsNotExist(err)
+	}
+	return true
+}
 
-		cookie, _ := r.Cookie("socket.io.sid")
-		if cookie == nil {
-			http.SetCookie(w, &http.Cookie{
-				Name:  "socket.io.sid",
-				Value: NewSessionID(),
-				Path:  "/",
-			})
+func (srv *SocketIOServer) StartServer() {
+
+	router := httprouter.New()
+	router.NotFound = NotFoundHandler
+
+	router.GET(SOCKETIO_BASE_SUFFIX, srv.handShake)
+	router.POST(SOCKETIO_BASE_SUFFIX, srv.handShake)
+
+	router.GET(SOCKETIO_WEBSOCKET_SUFFIX, srv.websocketConnection)
+
+	if srv.isSecure {
+		// http.ListenAndServeTLS(fmt.Sprintf(":%v", srv.port), srv.certPath, srv.keyPath, nil)
+	} else {
+		http.ListenAndServe(fmt.Sprintf(":%v", srv.port), router)
+	}
+
+}
+
+func NotFoundHandler(rw http.ResponseWriter, req *http.Request) {
+	io.WriteString(rw, NOT_FOUND)
+}
+
+// func (srv *SocketIOServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+// 	path := r.URL.Path
+// 	if !strings.HasPrefix(path, "/socket.io/1/") {
+
+// 		cookie, _ := r.Cookie("socket.io.sid")
+// 		if cookie == nil {
+// 			http.SetCookie(w, &http.Cookie{
+// 				Name:  "socket.io.sid",
+// 				Value: NewSessionID(),
+// 				Path:  "/",
+// 			})
+// 		}
+// 		srv.ServeMux.ServeHTTP(w, r)
+// 		return
+// 	}
+// 	path = path[len("/socket.io/1/"):]
+// 	if path == "" {
+// 		srv.handShake(w, r)
+// 		return
+// 	}
+
+// 	spliter := strings.SplitN(path, "/", 2)
+// 	if len(spliter) < 2 {
+// 		http.NotFound(w, r)
+// 		return
+// 	}
+
+// 	transportName, sessionId := spliter[0], spliter[1]
+// 	if transportName != "websocket" {
+// 		http.Error(w, "not websocket", http.StatusBadRequest)
+// 		return
+// 	}
+
+// 	session := srv.getSession(sessionId)
+// 	if session == nil {
+// 		http.Error(w, "invalid session id", http.StatusBadRequest)
+// 		return
+// 	}
+
+// 	// open
+// 	transport := newWebSocket(session)
+
+// 	websocket.Handler(transport.webSocketHandler).ServeHTTP(w, r)
+// }
+
+func (srv *SocketIOServer) websocketConnection(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		fmt.Println(err)
+		panic("error upgrading connection")
+	}
+
+	go func() {
+		readLoop(conn)
+		defer conn.Close()
+	}()
+}
+
+func readLoop(c *websocket.Conn) {
+	for {
+		_, r, err := c.NextReader()
+		if err != nil {
+			fmt.Println("error in readloop read")
+			fmt.Println(err)
+			c.Close()
+			break
 		}
-		srv.ServeMux.ServeHTTP(w, r)
-		return
+		fmt.Println("got message: " + fmt.Sprintf("%v", r))
 	}
-	path = path[len("/socket.io/1/"):]
-	if path == "" {
-		srv.handShake(w, r)
-		return
-	}
-
-	spliter := strings.SplitN(path, "/", 2)
-	if len(spliter) < 2 {
-		http.NotFound(w, r)
-		return
-	}
-
-	transportName, sessionId := spliter[0], spliter[1]
-	if transportName != "websocket" {
-		http.Error(w, "not websocket", http.StatusBadRequest)
-		return
-	}
-
-	session := srv.getSession(sessionId)
-	if session == nil {
-		http.Error(w, "invalid session id", http.StatusBadRequest)
-		return
-	}
-
-	// open
-	transport := newWebSocket(session)
-
-	websocket.Handler(transport.webSocketHandler).ServeHTTP(w, r)
 }
 
 func (srv *SocketIOServer) Of(name string) *EventEmitter {
@@ -145,30 +245,25 @@ func (srv *SocketIOServer) RemoveAllListeners(name string) {
 	srv.Of("").RemoveAllListeners(name)
 }
 
-// authorize origin!!
-func (srv *SocketIOServer) handShake(w http.ResponseWriter, r *http.Request) {
-	var values = make(map[interface{}]interface{})
-	if srv.authorize != nil {
-		if ok := srv.authorize(r, values); !ok {
-			http.Error(w, "", 401)
-			return
-		}
-	}
+func (srv *SocketIOServer) handShake(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+
 	w.Header().Set("Access-Control-Allow-Origin", r.Header.Get("origin"))
-	w.Header().Set("Access-Control-Allow-Methods", "GET")
 	w.Header().Set("Access-Control-Allow-Credentials", "true")
 
-	cookie, _ := r.Cookie("socket.io.sid")
-	var sessionId string
-	if cookie == nil {
-		sessionId = NewSessionID()
+	if srv.isAuthorized != nil {
+		params := make(map[string]string)
+		for key, val := range r.URL.Query() {
+			params[key] = val[0]
+		}
+		if !srv.isAuthorized(params) {
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte(UNAUTHORIZED))
+		}
 	} else {
-		sessionId = cookie.Value
+
 	}
-	if sessionId == "" {
-		http.Error(w, "", 503)
-		return
-	}
+
+	sessionId := NewSessionID()
 
 	transportNames := srv.transports.GetTransportNames()
 	fmt.Fprintf(w, "%s:%d:%d:%s",
@@ -183,11 +278,6 @@ func (srv *SocketIOServer) handShake(w http.ResponseWriter, r *http.Request) {
 		srv.addSession(session)
 	}
 
-	if values != nil {
-		for k, v := range values {
-			session.Values[k] = v
-		}
-	}
 }
 
 func (srv *SocketIOServer) addSession(ss *Session) {

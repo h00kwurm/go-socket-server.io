@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	SessionIDLength  = 16
+	SessionIDLength  = 21
 	SessionIDCharset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 )
 
@@ -32,7 +32,6 @@ type Session struct {
 	defaultNS         *NameSpace
 	Values            map[interface{}]interface{}
 	Request           *http.Request
-
 }
 
 func NewSessionID() string {
