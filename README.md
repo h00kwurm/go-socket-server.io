@@ -1,6 +1,6 @@
-##socket.io library for Golang
+##socket.io server library for Golang
 
-*Branch master branch is compatible with socket.io 0.9.x. For latest version, please check branch 1.0.*
+This branch is compatible with socket.io 0.9.x.
 
 forked from [http://code.google.com/p/go-socketio](http://code.google.com/p/go-socketio)
 Documentation: http://godoc.org/github.com/googollee/go-socket.io
@@ -63,99 +63,3 @@ func main() {
   log.Fatal(http.ListenAndServe(":3000", sio))
 }
 ```
-
-**go client:**
-
-```go
-package main
-
-import (
-  "log"
-  "github.com/googollee/go-socket.io"
-)
-
-func pol() {
-  client, err := socketio.Dial("http://127.0.0.1:3000/pol")
-  if err != nil {
-    panic(err)
-  }
-  client.On("connect", func(ns *socketio.NameSpace) {
-    log.Println("pol connected")
-  })
-  client.On("news", func(ns *socketio.NameSpace, message string) {
-    log.Println(message, " in Pol")
-  })
-  client.Run()
-}
-
-func main() {
-  client, err := socketio.Dial("http://127.0.0.1:3000/")
-  if err != nil {
-    panic(err)
-  }
-  client.On("connect", func(ns *socketio.NameSpace) {
-    log.Println("connected")
-    ns.Emit("ping", nil)
-  })
-  client.Of("/pol").On("news", func(ns *socketio.NameSpace, message string) {
-    log.Println(message, " in Pol 2")
-  })
-  client.On("news", func(ns *socketio.NameSpace, message string) {
-    log.Println(message)
-  })
-  client.On("pong", func(ns *socketio.NameSpace) {
-    log.Println("got pong")
-  })
-
-  go pol()
-
-  client.Run()
-}
-```
-
-**javascript client**
-
- **NOTE:** There is a provided socket.io.js file in the lib folder for including in your project
-
-```javascript
-  var socket = io.connect();
-  socket.on("connect", function(){
-    socket.emit("news", "this is title", "this is body", 1)
-  })
-  socket.on("news", function(message, urgency){
-    console.log(message + urgency);
-    socket.emit("ping")
-  })
-  socket.on("pong", function() {
-    console.log("got pong")
-  })
-  socket.of("/pol").on("news", function(message, urgency){
-    console.log(message + urgency);
-    socket.emit("ping")
-  })
-  socket.of("/pol").on("pong", function() {
-    console.log("got pong")
-  })
-  socket.on("disconnect", function() {
-    alert("You have disconnected from the server")
-  })
-  var pol = io.connect("http://localhost/pol");
-  pol.on("pong", function() {
-    console.log("got pong from pol")
-  })
-  pol.on("news", function(message, urgency){
-    console.log(message + urgency);
-    socket.emit("ping")
-  })
-```
-
-##Changelog
-- Added a socket.io client for quick use
-- Fixed the disconnect event
-- Added persistent sessionIds
-- Added session values
-- Added broadcast
-- Added a simpler Emit function to namespaces
-- Fixed connected event on endpoints
-- Added events without arguments
-- Fixed go client endpoints
