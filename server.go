@@ -179,16 +179,18 @@ func NotFoundHandler(rw http.ResponseWriter, req *http.Request) {
 // }
 
 func (srv *SocketIOServer) websocketConnection(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		fmt.Println(err)
-		panic("error upgrading connection")
-	}
+	io.WriteString(w, "fuck off")
 
-	go func() {
-		readLoop(conn)
-		defer conn.Close()
-	}()
+	// conn, err := upgrader.Upgrade(w, r, nil)
+	// if err != nil {
+	// 	fmt.Println(err)
+	// 	panic("error upgrading connection")
+	// }
+
+	// go func() {
+	// 	readLoop(conn)
+	// 	defer conn.Close()
+	// }()
 }
 
 func readLoop(c *websocket.Conn) {
@@ -258,9 +260,8 @@ func (srv *SocketIOServer) handShake(w http.ResponseWriter, r *http.Request, ps 
 		if !srv.isAuthorized(params) {
 			w.WriteHeader(http.StatusUnauthorized)
 			w.Write([]byte(UNAUTHORIZED))
+			return
 		}
-	} else {
-
 	}
 
 	sessionId := NewSessionID()
@@ -277,7 +278,6 @@ func (srv *SocketIOServer) handShake(w http.ResponseWriter, r *http.Request, ps 
 		session = NewSession(srv.eventEmitters, sessionId, srv.heartbeatTimeout, true, r)
 		srv.addSession(session)
 	}
-
 }
 
 func (srv *SocketIOServer) addSession(ss *Session) {
